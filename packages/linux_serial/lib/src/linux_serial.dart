@@ -8,24 +8,13 @@ import 'dart:typed_data';
 
 import 'package:computer/computer.dart';
 import 'package:meta/meta.dart';
-import 'package:ffi/ffi.dart' as ffi show Utf8, malloc, calloc;
+import 'package:collection/collection.dart';
+import 'package:ffi/ffi.dart' as ffi show StringUtf8Pointer, malloc, calloc;
 import 'package:path/path.dart';
 import 'package:tuple/tuple.dart';
 import 'package:async/async.dart';
 import 'package:synchronized/synchronized.dart';
 import 'package:_ardera_common_libc_bindings/_ardera_common_libc_bindings.dart';
-
-/// for whatever reason, importing ffi's StringUtf8Pointer does not work.
-extension StringUtf8Pointer on String {
-  ffi.Pointer<ffi.Utf8> toNativeUtf8({ffi.Allocator allocator = ffi.malloc}) {
-    final units = utf8.encode(this);
-    final ffi.Pointer<ffi.Uint8> result = allocator<ffi.Uint8>(units.length + 1);
-    final Uint8List nativeString = result.asTypedList(units.length + 1);
-    nativeString.setAll(0, units);
-    nativeString[units.length] = 0;
-    return result.cast();
-  }
-}
 
 @immutable
 class Baudrate {
@@ -839,30 +828,19 @@ class SerialPortHandle implements StringSink, StringReader {
     return result.then<void>((value) => null);
   }
 
-  Future<void> writeBytes(List<int> bytes) {
+  Future<void> writeBytes(Iterable<int> bytes) {
     assert(_isOpen);
 
     if (bytes.isEmpty) {
       return _writeLock.synchronized(() {});
     }
 
-    final subTransmissions = <Iterable<int>>[];
-    do {
-      subTransmissions.add(bytes.take(_bufferSize));
-      bytes = bytes.skip(_bufferSize) as List<int>;
-    } while (bytes.length > _bufferSize);
-
     return _writeLock.synchronized(() async {
       if (!_isOpen) return;
 
-      for (final subTransmission in subTransmissions) {
-        var index = 0;
-        for (final byte in subTransmission) {
-          _writeBufferAsTypedList[index] = byte;
-          index++;
-        }
-
-        await PlatformInterface.instance.write(_fd, _writeBuffer, subTransmission.length);
+      for (final slice in bytes.slices(_bufferSize)) {
+        _writeBufferAsTypedList.setAll(0, slice);
+        await PlatformInterface.instance.write(_fd, _writeBuffer, slice.length);
       }
     });
   }
